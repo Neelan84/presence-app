@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Connexion Testeur</title>
+  <style>
+    body { font-family: Arial; background: #eaf6ff; margin: 0; }
+    #loginScreen {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 100vh;
+    }
+    #appContainer { display: none; padding: 20px; gap: 20px; flex-direction: row; }
+    main { flex: 1; }
+    h1 { color: #004aad; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    th { background: #cce5ff; }
+    .present { background-color: #c8f7c5; }
+    .absent { background-color: #f7c5c5; }
+    .ok { background-color: #c8f7c5; }
+    .ko { background-color: #f7c5c5; }
+    .nt { background-color: #f0e68c; }
+    .ready { animation: blink 1s infinite; background-color: #b2fab4; }
+    @keyframes blink { 50% { background-color: #7fff7f; } }
+    .toolbar { margin-bottom: 15px; }
+    .toolbar button, .toolbar input, .toolbar select { margin-right: 10px; }
+
+    #filActivite {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      width: 300px;
+      max-height: 400px;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid #ccc;
+      padding: 10px;
+      z-index: 1000;
+      resize: both;
+      min-width: 200px;
+      min-height: 100px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+
+    #filHeader {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: move;
+      margin-bottom: 10px;
+    }
+
+    #filHeader h2 {
+      margin: 0;
+      font-size: 1.1em;
+    }
+
+    #toggleFilActivite, #showFilActivite {
+      font-size: 0.9em;
+      padding: 3px 6px;
+    }
+
+    #showFilActivite {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 1100;
+      display: none;
+    }
+
+    #logListe { 
+      list-style: none; 
+      padding: 0; 
+      font-size: 0.9em; 
+    }
+    #logListe li { 
+      margin-bottom: 5px; 
+    }
+  </style>
+</head>
+<body>
+  <div id="loginScreen">
+    <h2>Connexion</h2>
+    <input type="text" id="prenomInput" placeholder="Entrez votre prénom" />
+    <button id="loginBtn">Se connecter</button>
+  </div>
+
+  <div id="appContainer">
+    <main>
+      <h1>Connexion testeur</h1>
+
+      <div class="toolbar" id="adminToolbar" style="display: none;">
+        <input type="file" id="fichierExcel" />
+        <button id="importer">Importer Excel</button>
+        <button id="exporter">Exporter</button>
+        <button id="ajouterUtilisateur">Ajouter utilisateur</button>
+        <button id="supprimerUtilisateur">Supprimer utilisateur</button>
+        <button id="ajouterApplication">Ajouter application</button>
+        <button id="supprimerApplication">Supprimer application</button>
+      </div>
+
+      <div>
+        <label for="filtreUtilisateur">Filtrer par utilisateur :</label>
+        <select id="filtreUtilisateur">
+          <option value="">-- Tous les utilisateurs --</option>
+        </select>
+      </div>
+      <div id="tableau"></div>
+    </main>
+
+    <div id="filActivite">
+      <div id="filHeader">
+        <h2>Fil d'activité</h2>
+        <button id="toggleFilActivite">Masquer</button>
+      </div>
+      <ul id="logListe"></ul>
+    </div>
+  </div>
+
+  <button id="showFilActivite">Afficher Fil d'activité</button>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js';
+    import {
+      getFirestore, collection, onSnapshot, setDoc, doc, deleteDoc,
+      getDocs, addDoc, serverTimestamp, query, orderBy
+    } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
+    import * as XLSX from 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm';
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyAeWgUhi1jjUI3STa98kKpkupNaBO8OAhc",
+      authDomain: "psi-test-9af56.firebaseapp.com",
+      projectId: "psi-test-9af56",
+      storageBucket: "psi-test-9af56.appspot.com",
+      messagingSenderId: "370916584359",
+      appId: "1:370916584359:web:ba5231c9f6642c07dd2482",
+      measurementId: "G-QMDJ5517FE"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    let currentUserPrenom = "";
+    let currentFilter = "";
+
+    function afficherTableau(donnees) {
+      const appliSet = new Set();
+      Object.values(donnees).forEach(apps => {
+        Object.keys(apps).forEach(appli => appliSet.add(appli));
+      });
+      // Tri alphabétique des applis sauf "Présence"
+      const applis = Array.from(appliSet)
+        .filter(app => app !== "Présence")
+        .sort((a, b) => a.localeCompare(b));
+
+      let html = `<table><tr><th>Utilisateur</th><th>Présence</th>`;
+      applis.forEach(app => html += `<th>${app}</th>`);
+      html += `</tr>`;
+
+      const utilisateursTries = Object.entries(donnees).sort((a, b) => {
+        const nomA = a[0].split(".")[1]?.toLowerCase() || "";
+        const nomB = b[0].split(".")[1]?.toLowerCase() || "";
+        return nomA.localeCompare(nomB);
+      });
+
+      utilisateursTries.forEach(([utilisateur, apps]) => {
+        if (currentFilter && currentFilter !== utilisateur) return;
+        const presence = apps["Présence"] || "Absent";
+        const rowClass = presence === "Présent" ? 'present' : 'absent';
+
+        const [_, nom, prenom] = utilisateur.split(".");
+        const nomAffiche = nom && prenom ? `${nom.toUpperCase()} ${prenom}` : utilisateur;
+
+        html += `<tr class="${rowClass}"><td>${nomAffiche}</td><td>
+          <select onchange="mettreAJour('${utilisateur}', 'Présence', this.value)">
+            <option value="Présent" ${presence === 'Présent' ? 'selected' : ''}>Présent</option>
+            <option value="Absent" ${presence === 'Absent' ? 'selected' : ''}>Absent</option>
+          </select>
+        </td>`;
+
+        applis.forEach(app => {
+          const val = apps[app] || "NT";
+          const cellClass = val.toLowerCase();
+          html += `<td class="${cellClass}">
+            <select onchange="mettreAJour('${utilisateur}', '${app}', this.value)">
+              <option value="OK" ${val === 'OK' ? 'selected' : ''}>OK</option>
+              <option value="KO" ${val === 'KO' ? 'selected' : ''}>KO</option>
+              <option value="NT" ${val === 'NT' ? 'selected' : ''}>NT</option>
+              <option value="Ready" ${val === 'Ready' ? 'selected' : ''}>Ready</option>
+            </select>
+          </td>`;
+        });
+
+        html += `</tr>`;
+      });
+
+      html += '</table>';
+      document.getElementById("tableau").innerHTML = html;
+    }
+
+    window.mettreAJour = async function(utilisateur, application, statut) {
+      const docId = `${utilisateur}_${application}`;
+      await setDoc(doc(db, "presences", docId), { statut });
+      await logAction(`Statut mis à jour : ${utilisateur} - ${application} → ${statut}`);
+
+      if (application === "Présence" && statut === "Présent") {
+        const snapshot = await getDocs(collection(db, "presences"));
+        for (const docSnap of snapshot.docs) {
+          const [user, app] = docSnap.id.split("_");
+          if (user === utilisateur && app !== "Présence") {
+            const currentStatut = docSnap.data().statut;
+            if (currentStatut === "NT") {
+              await setDoc(doc(db, "presences", `${utilisateur}_${app}`), { statut: "Ready" });
+            }
+          }
+        }
+      }
+    };
+
+    function remplirFiltre(utilisateurs) {
+      const select = document.getElementById("filtreUtilisateur");
+      const actuel = select.value;
+      select.innerHTML = '<option value="">-- Tous les utilisateurs --</option>';
+      utilisateurs.forEach(nom => {
+        const opt = document.createElement("option");
+        opt.value = nom;
+        opt.textContent = nom;
+        select.appendChild(opt);
+      });
+      select.value = actuel;
+    }
+
+    function afficherLogs() {
+      const activitesRef = query(collection(db, "activites"), orderBy("timestamp", "desc"));
+      onSnapshot(activitesRef, snapshot => {
+        const logListe = document.getElementById("logListe");
+        logListe.innerHTML = "";
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          if (!data.timestamp || !data.message) return;
+          const time = new Date(data.timestamp.seconds * 1000).toLocaleTimeString();
+          const user = data.user || "Inconnu";
+          const li = document.createElement("li");
+          li.textContent = `[${time}] ${user} - ${data.message}`;
+          logListe.appendChild(li);
+        });
+      });
+    }
+
+    async function chargerDonnees() {
+      const presencesRef = collection(db, "presences");
+      onSnapshot(presencesRef, snapshot => {
+        const donnees = {};
+        snapshot.forEach(docSnap => {
+          const [utilisateur, application] = docSnap.id.split("_");
+          if (!donnees[utilisateur]) donnees[utilisateur] = {};
+          donnees[utilisateur][application] = docSnap.data().statut;
+        });
+        afficherTableau(donnees);
+        remplirFiltre(Object.keys(donnees));
+      });
+    }
+
+    window.chargerDonnees = chargerDonnees;
+
+    async function logAction(message) {
+      if (!currentUserPrenom) return;
+      await addDoc(collection(db, "activites"), {
+        user: currentUserPrenom,
+        message,
+        timestamp: serverTimestamp()
+      });
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const loginBtn = document.getElementById("loginBtn");
+      const prenomInput = document.getElementById("prenomInput");
+
+      loginBtn?.addEventListener("click", () => {
+        const prenom = prenomInput.value.trim();
+        if (!prenom) {
+          alert("Veuillez saisir votre prénom.");
+          return;
+        }
+
+        currentUserPrenom = prenom;
+        currentFilter = "";
+        document.getElementById("loginScreen").style.display = "none";
+        document.getElementById("appContainer").style.display = "flex";
+
+        if (prenom === "admin.rishi") {
+          document.getElementById("adminToolbar").style.display = "block";
+        }
+
+        chargerDonnees();
+        afficherLogs();
+      });
+
+      document.getElementById("filtreUtilisateur")?.addEventListener("change", e => {
+        currentFilter = e.target.value;
+        chargerDonnees();
+      });
+
+      const filActiviteDiv = document.getElementById("filActivite");
+      const toggleBtn = document.getElementById("toggleFilActivite");
+      const showBtn = document.getElementById("showFilActivite");
+
+      toggleBtn.addEventListener("click", () => {
+        filActiviteDiv.style.display = "none";
+        showBtn.style.display = "block";
+      });
+
+      showBtn.addEventListener("click", () => {
+        filActiviteDiv.style.display = "block";
+        showBtn.style.display = "none";
+      });
+
+      const filHeader = document.getElementById("filHeader");
+      filHeader.addEventListener('mousedown', dragMouseDown);
+
+      function dragMouseDown(e) {
+        e.preventDefault();
+        let pos3 = e.clientX;
+        let pos4 = e.clientY;
+        document.onmouseup = closeDragElement;
+        document.onmousemove = elementDrag;
+
+        function elementDrag(e) {
+          e.preventDefault();
+          const pos1 = pos3 - e.clientX;
+          const pos2 = pos4 - e.clientY;
+          pos3 = e.clientX;
+          pos4 = e.clientY;
+
+          filActiviteDiv.style.top = (filActiviteDiv.offsetTop - pos2) + "px";
+          filActiviteDiv.style.left = (filActiviteDiv.offsetLeft - pos1) + "px";
+        }
+
+        function closeDragElement() {
+          document.onmouseup = null;
+          document.onmousemove = null;
+        }
+      }
+    });
+  </script>
+</body>
+</html>
